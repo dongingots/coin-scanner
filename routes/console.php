@@ -1,18 +1,39 @@
 <?php
 
+use App\Models\User;
+use App\Services\Trading\ScanRequestService;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
-use App\Jobs\ScanMarketsJob;
-use App\Models\User;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Artisan::command('bybit:scan', function () {
-    ScanMarketsJob::dispatch();
-    $this->info('Bybit market scan queued.');
+Artisan::command('bybit:scan', function (ScanRequestService $scans) {
+    $request = $scans->queueScan();
+
+    if ($request['status'] === 'queued') {
+        $this->info('Bybit market scan queued for '.$request['candle_at'].'.');
+
+        return 0;
+    }
+
+    if ($request['status'] === 'already_running') {
+        $this->comment('A Bybit market scan is already queued or running. No duplicate was dispatched.');
+
+        return 0;
+    }
+
+    if ($request['status'] === 'no_active_strategy') {
+        $this->error('No active trading strategy is available to scan.');
+
+        return 1;
+    }
+
+    $this->error('The Bybit market scan could not be queued. Check the queue connection and try again.');
+
+    return 1;
 })->purpose('Queue a read-only Bybit USDT perpetual market scan');
 
 Artisan::command('bybit:strategy:configure {user_id} {--name=Altcoin Bullish Scanner} {--min-turnover=} {--volume-sma=} {--excluded=} {--include-btc} {--include-eth} {--include-stablecoins} {--activate}', function () {

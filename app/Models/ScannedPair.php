@@ -42,6 +42,11 @@ class ScannedPair extends Model
         return $this->hasMany(TradingSignal::class);
     }
 
+    public function scanRunResults(): HasMany
+    {
+        return $this->hasMany(ScanRunPairResult::class);
+    }
+
     public function latestSignal(): HasOne
     {
         return $this->hasOne(TradingSignal::class)->latestOfMany('candle_at');

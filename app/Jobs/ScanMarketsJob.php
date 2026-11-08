@@ -2,18 +2,19 @@
 
 namespace App\Jobs;
 
-use App\Models\ScanRun;
 use App\Models\ScannedPair;
-use App\Models\TradingSignal;
+use App\Models\ScanRun;
+use App\Models\ScanRunPairResult;
 use App\Models\TradingStrategy;
+use App\Services\Trading\FourHourCandleClock;
 use App\Services\Trading\MarketUniverseService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\RateLimited;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
-use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
 use Throwable;
@@ -28,7 +29,8 @@ class ScanMarketsJob implements ShouldBeUnique, ShouldQueue
 
     public int $uniqueFor = 3600;
 
-    public function __construct()
+    /** @param list<int> $scanRunIds */
+    public function __construct(public array $scanRunIds = [])
     {
         $this->onQueue('bybit-market-data');
     }
@@ -47,34 +49,76 @@ class ScanMarketsJob implements ShouldBeUnique, ShouldQueue
         ];
     }
 
-    public function handle(MarketUniverseService $universe): void
+    public function handle(MarketUniverseService $universe, FourHourCandleClock $candleClock): void
     {
-        $strategies = TradingStrategy::query()->where('is_active', true)->get();
+        $candleOpenMs = $candleClock->latestClosedCandleOpenMilliseconds();
+        $candleAt = Carbon::createFromTimestampMs($candleOpenMs, 'UTC');
+        $runsByStrategy = collect();
+
+        if ($this->scanRunIds === []) {
+            $strategies = TradingStrategy::query()->where('is_active', true)->get();
+
+            foreach ($strategies as $strategy) {
+                $runsByStrategy->put($strategy->id, $strategy->scanRuns()->create([
+                    'status' => 'running',
+                    'started_at' => now(),
+                    'candle_at' => $candleAt,
+                    'minimum_turnover_snapshot' => $strategy->minimum_turnover_24h_usdt,
+                    'rsi_maximum_snapshot' => $strategy->rsi_maximum,
+                ]));
+            }
+        } else {
+            $runsByStrategy = ScanRun::query()
+                ->whereIn('id', $this->scanRunIds)
+                ->where('status', 'queued')
+                ->get()
+                ->keyBy('trading_strategy_id');
+
+            $strategies = TradingStrategy::query()
+                ->where('is_active', true)
+                ->whereIn('id', $runsByStrategy->keys())
+                ->get();
+
+            $inactiveRunIds = $runsByStrategy->keys()->diff($strategies->modelKeys())
+                ->map(fn (int $strategyId): int => $runsByStrategy->get($strategyId)->id)
+                ->all();
+
+            if ($inactiveRunIds !== []) {
+                ScanRun::query()->whereIn('id', $inactiveRunIds)->update([
+                    'status' => 'failed',
+                    'finished_at' => now(),
+                    'error_message' => 'strategy_inactive_before_scan',
+                ]);
+            }
+
+            foreach ($strategies as $strategy) {
+                $run = $runsByStrategy->get($strategy->id);
+                $run->update([
+                    'status' => 'running',
+                    'started_at' => now(),
+                    'candle_at' => $candleAt,
+                    'minimum_turnover_snapshot' => $strategy->minimum_turnover_24h_usdt,
+                    'rsi_maximum_snapshot' => $strategy->rsi_maximum,
+                ]);
+            }
+        }
 
         if ($strategies->isEmpty()) {
             return;
         }
 
-        $runs = $strategies->map(fn (TradingStrategy $strategy) => $strategy->scanRuns()->create([
-            'status' => 'running',
-            'started_at' => now(),
-        ]));
-
         try {
             $snapshot = $universe->fetchSnapshot();
 
-            foreach ($strategies as $index => $strategy) {
+            foreach ($strategies as $strategy) {
                 /** @var ScanRun $run */
-                $run = $runs[$index];
+                $run = $runsByStrategy->get($strategy->id);
                 $strategy->scannedPairs()->update(['is_active' => false]);
-                $candidates = $universe->candidatesFor($strategy, $snapshot);
+                $candidates = $universe->candidatesFor($strategy, $snapshot, $run->minimum_turnover_snapshot);
                 $run->update([
                     'instrument_count' => count($snapshot['instruments']),
                     'pair_count' => count($candidates),
                 ]);
-
-                $candleOpenMs = $this->latestClosedCandleOpenMs();
-                $candleAt = Carbon::createFromTimestampMs($candleOpenMs, 'UTC');
 
                 foreach ($candidates as $candidate) {
                     /** @var ScannedPair $pair */
@@ -90,29 +134,31 @@ class ScanMarketsJob implements ShouldBeUnique, ShouldQueue
                         ],
                     );
 
-                    if (! $candidate['can_evaluate']) {
-                        $signal = $pair->signals()->firstOrCreate(
-                            ['timeframe' => '4H', 'candle_at' => $candleAt],
-                            [
-                                'is_qualified' => false,
-                                'evaluation_reason' => $candidate['reason'],
-                                'evaluated_at' => now(),
-                            ],
-                        );
+                    $pairResult = $run->pairResults()->firstOrCreate(
+                        ['scanned_pair_id' => $pair->id],
+                        [
+                            'turnover_24h_snapshot' => $candidate['turnover'],
+                            'minimum_turnover_snapshot' => $run->minimum_turnover_snapshot,
+                            'status' => ScanRunPairResult::STATUS_PENDING,
+                        ],
+                    );
 
-                        $run->recordResult($signal->is_qualified);
+                    if (! $candidate['can_evaluate']) {
+                        $pairResult->complete(false, $candidate['reason'] ?? 'candidate_not_eligible');
 
                         continue;
                     }
 
-                    EvaluateSymbolJob::dispatch($pair->id, $run->id, $candleOpenMs)
-                        ->onQueue('bybit-market-data');
+                    if ($pairResult->status === ScanRunPairResult::STATUS_PENDING) {
+                        EvaluateSymbolJob::dispatch($pair->id, $run->id, $candleOpenMs, $pairResult->id)
+                            ->onQueue('bybit-market-data');
+                    }
                 }
 
                 $run->finishIfSettled();
             }
         } catch (Throwable $exception) {
-            foreach ($runs as $run) {
+            foreach ($runsByStrategy as $run) {
                 if ($run->fresh()?->status === 'running') {
                     $run->update([
                         'status' => 'failed',
@@ -126,11 +172,18 @@ class ScanMarketsJob implements ShouldBeUnique, ShouldQueue
         }
     }
 
-    private function latestClosedCandleOpenMs(): int
+    public function failed(Throwable $exception): void
     {
-        $intervalMs = (int) config('trading_scanner.candle_interval_ms', 14_400_000);
-        $currentOpenMs = intdiv(now('UTC')->getTimestampMs(), $intervalMs) * $intervalMs;
+        if ($this->scanRunIds === []) {
+            return;
+        }
 
-        return $currentOpenMs - $intervalMs;
+        ScanRun::query()->whereIn('id', $this->scanRunIds)
+            ->whereIn('status', ['queued', 'running'])
+            ->update([
+                'status' => 'failed',
+                'finished_at' => now(),
+                'error_message' => 'scan_job_failed:'.class_basename($exception),
+            ]);
     }
 }

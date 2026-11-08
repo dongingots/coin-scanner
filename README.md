@@ -49,11 +49,17 @@ Run the scanner on demand and start its worker/scheduler with:
 
 ```powershell
 php artisan bybit:scan
-php artisan queue:work redis --queue=bybit-market-data
+php artisan queue:work redis --queue=bybit-market-data,default --tries=3 --timeout=300
 php artisan schedule:work
 ```
 
-The scheduler queues a scan five minutes after each 4-hour boundary. Redis-backed queue rate limits and locks reduce request bursts and overlapping/duplicate evaluations. `scan_runs` records counts and failure status. The Livewire results page is available at `/scanner`.
+The queue worker must listen to both `bybit-market-data` (scanner jobs) and `default` (other application jobs). Use the same queue list in production process-manager/Supervisor configuration; restart existing workers after changing it. The local `composer run dev` worker listens to both queues as well. The scheduler queues a scan five minutes after each 4-hour boundary. Redis-backed queue rate limits and locks reduce request bursts and overlapping/duplicate evaluations. `scan_runs` records counts and failure status. The Livewire results page is available at `/scanner`.
+
+For a production queue worker managed by Supervisor or an equivalent process manager, use this command (and keep it running under that manager):
+
+```sh
+php artisan queue:work redis --queue=bybit-market-data,default --tries=3 --timeout=300
+```
 
 ## Tests
 

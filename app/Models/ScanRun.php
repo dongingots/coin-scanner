@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ScanRun extends Model
 {
@@ -13,6 +14,7 @@ class ScanRun extends Model
     protected $fillable = [
         'trading_strategy_id',
         'status',
+        'queued_at',
         'instrument_count',
         'pair_count',
         'evaluated_count',
@@ -20,6 +22,9 @@ class ScanRun extends Model
         'not_qualified_count',
         'failed_count',
         'started_at',
+        'candle_at',
+        'minimum_turnover_snapshot',
+        'rsi_maximum_snapshot',
         'finished_at',
         'error_message',
     ];
@@ -27,7 +32,11 @@ class ScanRun extends Model
     protected function casts(): array
     {
         return [
+            'queued_at' => 'datetime',
             'started_at' => 'datetime',
+            'candle_at' => 'datetime',
+            'minimum_turnover_snapshot' => 'decimal:8',
+            'rsi_maximum_snapshot' => 'decimal:2',
             'finished_at' => 'datetime',
         ];
     }
@@ -35,6 +44,11 @@ class ScanRun extends Model
     public function strategy(): BelongsTo
     {
         return $this->belongsTo(TradingStrategy::class, 'trading_strategy_id');
+    }
+
+    public function pairResults(): HasMany
+    {
+        return $this->hasMany(ScanRunPairResult::class);
     }
 
     public function recordResult(bool $qualified): void

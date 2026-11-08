@@ -12,18 +12,19 @@ class MarketUniverseServiceTest extends TestCase
 {
     public function test_instrument_pages_are_fetched_until_the_cursor_is_exhausted_and_tickers_once(): void
     {
+        $environment = (string) config('trading_scanner.environment', 'testnet');
         $client = Mockery::mock(BybitReadOnlyClient::class);
         $client->shouldReceive('getLinearInstruments')
             ->once()
-            ->with(null, 1000, 'testnet')
+            ->with(null, 1000, $environment)
             ->andReturn(['list' => [['symbol' => 'AAAUSDT']], 'nextPageCursor' => 'page-2']);
         $client->shouldReceive('getLinearInstruments')
             ->once()
-            ->with('page-2', 1000, 'testnet')
+            ->with('page-2', 1000, $environment)
             ->andReturn(['list' => [['symbol' => 'BBBUSDT']], 'nextPageCursor' => '']);
         $client->shouldReceive('getTickers')
             ->once()
-            ->with('linear', null, 'testnet')
+            ->with('linear', null, $environment)
             ->andReturn(['list' => [['symbol' => 'AAAUSDT', 'turnover24h' => '1000']]]);
 
         $snapshot = (new MarketUniverseService($client))->fetchSnapshot();
@@ -61,7 +62,7 @@ class MarketUniverseServiceTest extends TestCase
         ];
 
         $candidates = (new MarketUniverseService(Mockery::mock(BybitReadOnlyClient::class)))
-            ->candidatesFor($strategy, $snapshot);
+            ->candidatesFor($strategy, $snapshot, $strategy->minimum_turnover_24h_usdt);
 
         $this->assertSame(['ALTUSDT', 'LOWUSDT', 'MISSINGUSDT'], array_column($candidates, 'symbol'));
         $this->assertTrue($candidates[0]['can_evaluate']);
@@ -78,7 +79,7 @@ class MarketUniverseServiceTest extends TestCase
         ];
 
         $candidate = (new MarketUniverseService(Mockery::mock(BybitReadOnlyClient::class)))
-            ->candidatesFor($strategy, $snapshot)[0];
+            ->candidatesFor($strategy, $snapshot, $strategy->minimum_turnover_24h_usdt)[0];
 
         $this->assertNull($strategy->minimum_turnover_24h_usdt);
         $this->assertTrue($candidate['can_evaluate']);

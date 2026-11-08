@@ -63,15 +63,13 @@ class MarketUniverseService
     }
 
     /** @param array{instruments:list<array<string,mixed>>,tickers:array<string,array<string,mixed>>} $snapshot
-     *  @return list<array{symbol:string,base_coin:string,quote_coin:string,contract_type:string,turnover:?string,can_evaluate:bool,reason:?string}>
+     * @return list<array{symbol:string,base_coin:string,quote_coin:string,contract_type:string,turnover:?string,can_evaluate:bool,reason:?string}>
      */
-    public function candidatesFor(TradingStrategy $strategy, array $snapshot): array
+    public function candidatesFor(TradingStrategy $strategy, array $snapshot, ?string $minimumTurnover): array
     {
         $candidates = [];
         $excludedSymbols = array_map('strtoupper', $strategy->excluded_symbols ?? []);
         $stablecoins = array_map('strtoupper', config('trading_scanner.stablecoin_base_coins', []));
-        $minimumTurnover = $strategy->minimum_turnover_24h_usdt;
-
         foreach ($snapshot['instruments'] as $instrument) {
             $symbol = strtoupper((string) ($instrument['symbol'] ?? ''));
             $baseCoin = strtoupper((string) ($instrument['baseCoin'] ?? ''));

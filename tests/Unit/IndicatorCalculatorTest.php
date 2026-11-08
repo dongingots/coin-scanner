@@ -38,6 +38,96 @@ class IndicatorCalculatorTest extends TestCase
         $this->assertEqualsWithDelta(3.0, $sma, 0.000001);
     }
 
+    public function test_rsi_uses_wilder_smoothing_with_a_simple_average_seed(): void
+    {
+        $closes = $this->closesFromChanges(array_merge(array_fill(0, 13, 1.0), [-1.0, -1.0]));
+
+        $rsi = (new IndicatorCalculator)->rsi($closes, 14);
+
+        $this->assertEqualsWithDelta(86.2244897959, $rsi, 0.0000001);
+    }
+
+    public function test_rsi_returns_null_for_insufficient_or_invalid_close_data(): void
+    {
+        $calculator = new IndicatorCalculator;
+
+        $this->assertNull($calculator->rsi(array_fill(0, 14, 100.0), 14));
+        $this->assertNull($calculator->rsi(array_merge(array_fill(0, 14, 100.0), ['not-a-price']), 14));
+        $this->assertNull($calculator->rsi(array_merge(array_fill(0, 14, 100.0), [NAN]), 14));
+    }
+
+    public function test_rsi_qualification_accepts_values_below_and_equal_to_65_and_rejects_above(): void
+    {
+        $calculator = new IndicatorCalculator;
+        $signalService = new TradingSignalService($calculator);
+        $baseline = ['ema_bullish' => true, 'ha_bullish' => true, 'volume_confirmed' => true, 'rsi_data_status' => 'valid'];
+        $below = $calculator->rsi($this->closesFromChanges(array_merge(array_fill(0, 13, 1.0), [-10.0])), 14);
+        $equal = $calculator->rsi($this->closesFromChanges(array_merge(array_fill(0, 13, 1.0), [-7.0])), 14);
+        $above = $calculator->rsi($this->closesFromChanges(array_merge(array_fill(0, 13, 1.0), [-6.0])), 14);
+
+        $this->assertEqualsWithDelta(56.52173913, $below, 0.000001);
+        $this->assertEqualsWithDelta(65.0, $equal, 0.000001);
+        $this->assertGreaterThan(65, $above);
+        $this->assertTrue($signalService->qualify($baseline + ['rsi_14' => $below], 65)['is_qualified']);
+        $this->assertSame('passed', $signalService->qualify($baseline + ['rsi_14' => $equal], 65)['rsi_status']);
+        $this->assertSame('rsi_above_maximum', $signalService->qualify($baseline + ['rsi_14' => $above], 65)['evaluation_reason']);
+        $this->assertFalse($signalService->qualify($baseline + ['rsi_14' => $above], 65)['is_qualified']);
+    }
+
+    public function test_insufficient_and_invalid_rsi_data_have_explicit_reasons_and_never_pass_as_zero(): void
+    {
+        $service = new TradingSignalService(new IndicatorCalculator);
+        $baseline = ['ema_bullish' => true, 'ha_bullish' => true, 'volume_confirmed' => true];
+        $shortCandles = [];
+        for ($index = 0; $index < 10; $index++) {
+            $close = 100 + $index;
+            $shortCandles[] = [
+                'open' => $close - 0.5,
+                'high' => $close + 1,
+                'low' => $close - 1,
+                'close' => $close,
+                'volume' => 10,
+            ];
+        }
+        $shortHistory = $service->evaluate(new TradingStrategy, $shortCandles);
+        $insufficient = $service->qualify($baseline + [
+            'rsi_data_status' => $shortHistory['rsi_data_status'],
+            'rsi_14' => $shortHistory['rsi_14'],
+        ], 65);
+        $invalid = $service->qualify($baseline + ['rsi_data_status' => 'invalid_data', 'rsi_14' => null], 65);
+
+        $this->assertSame('insufficient_history', $insufficient['rsi_status']);
+        $this->assertSame('insufficient_rsi_history', $insufficient['evaluation_reason']);
+        $this->assertSame('invalid_data', $invalid['rsi_status']);
+        $this->assertSame('invalid_rsi_data', $invalid['evaluation_reason']);
+        $this->assertFalse($invalid['is_qualified']);
+    }
+
+    public function test_signal_rsi_uses_regular_close_prices_not_heikin_ashi_closes(): void
+    {
+        $candles = [];
+
+        for ($index = 0; $index < 30; $index++) {
+            $close = 100 + (($index % 3) * 2) + $index;
+            $open = $close + ($index % 2 === 0 ? 4 : -3);
+            $candles[] = [
+                'open' => $open,
+                'high' => max($open, $close) + 2,
+                'low' => min($open, $close) - 2,
+                'close' => $close,
+                'volume' => 10.0,
+            ];
+        }
+
+        $indicators = new IndicatorCalculator;
+        $result = (new TradingSignalService($indicators))->evaluate(new TradingStrategy, $candles);
+        $regularCloseRsi = $indicators->rsi(array_column($candles, 'close'), 14);
+        $heikinAshiCloseRsi = $indicators->rsi(array_column($indicators->heikinAshi($candles), 'close'), 14);
+
+        $this->assertEqualsWithDelta($regularCloseRsi, $result['rsi_14'], 0.000001);
+        $this->assertNotEqualsWithDelta($heikinAshiCloseRsi, $result['rsi_14'], 0.000001);
+    }
+
     public function test_rising_ema_does_not_require_a_fresh_crossover(): void
     {
         $signals = (new TradingSignalService(new IndicatorCalculator))->evaluate(
@@ -127,5 +217,19 @@ class IndicatorCalculatorTest extends TestCase
         }
 
         return $candles;
+    }
+
+    /** @param list<float> $changes
+     * @return list<float>
+     */
+    private function closesFromChanges(array $changes): array
+    {
+        $closes = [100.0];
+
+        foreach ($changes as $change) {
+            $closes[] = end($closes) + $change;
+        }
+
+        return $closes;
     }
 }

@@ -4,15 +4,16 @@ namespace App\Jobs;
 
 use App\Contracts\BybitReadOnlyClient;
 use App\Exceptions\CandleDataException;
-use App\Models\ScanRun;
 use App\Models\ScannedPair;
+use App\Models\ScanRun;
+use App\Models\ScanRunPairResult;
 use App\Models\TradingSignal;
 use App\Services\Trading\CandleDataNormalizer;
 use App\Services\Trading\TradingSignalService;
+use DateTimeInterface;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\RateLimited;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
@@ -30,10 +31,20 @@ class EvaluateSymbolJob implements ShouldQueue
 
     public array $backoff = [10, 30, 60];
 
+    /**
+     * Rate-limited queue releases count as attempts. Give the shared market-data
+     * queue time to drain large scans instead of failing jobs after three releases.
+     */
+    public function retryUntil(): DateTimeInterface
+    {
+        return now()->addMinutes(30);
+    }
+
     public function __construct(
         public readonly int $scannedPairId,
         public readonly int $scanRunId,
         public readonly int $candleOpenMs,
+        public readonly ?int $scanRunPairResultId = null,
     ) {
         $this->onQueue('bybit-market-data');
     }
@@ -54,105 +65,180 @@ class EvaluateSymbolJob implements ShouldQueue
         CandleDataNormalizer $normalizer,
         TradingSignalService $signalService,
     ): void {
-        $pair = ScannedPair::query()->with('strategy')->findOrFail($this->scannedPairId);
         $run = ScanRun::query()->findOrFail($this->scanRunId);
+
+        if ($run->status !== 'running') {
+            return;
+        }
+
+        $pair = ScannedPair::query()->with('strategy')->findOrFail($this->scannedPairId);
+        $pairResult = $this->pairResult($run, $pair);
+
+        if ($pairResult->status !== ScanRunPairResult::STATUS_PENDING) {
+            return;
+        }
+
+        $rsiMaximumSnapshot = $run->rsi_maximum_snapshot;
+
+        if ($rsiMaximumSnapshot === null) {
+            $rsiMaximumSnapshot = $pair->strategy->rsi_maximum;
+            $run->update(['rsi_maximum_snapshot' => $rsiMaximumSnapshot]);
+        }
+
+        $minimumTurnover = $run->minimum_turnover_snapshot;
+        $pairResult->update(['minimum_turnover_snapshot' => $minimumTurnover]);
+
+        if ($pairResult->turnover_24h_snapshot === null) {
+            $pairResult->complete(false, 'ticker_turnover_unavailable');
+
+            return;
+        }
+
+        if ($minimumTurnover !== null && (float) $pairResult->turnover_24h_snapshot < (float) $minimumTurnover) {
+            $pairResult->complete(false, 'turnover_below_configured_minimum');
+
+            return;
+        }
+
         $candleAt = Carbon::createFromTimestampMs($this->candleOpenMs, 'UTC');
-        $existing = $pair->signals()->where('timeframe', '4H')->where('candle_at', $candleAt)->first();
+        $signal = $pair->signals()->where('timeframe', '4H')->where('candle_at', $candleAt)->first();
 
-        if ($existing !== null) {
-            $run->recordResult($existing->is_qualified);
-
-            return;
-        }
-
-        $requiredCount = max(
-            400,
-            (int) config('trading_scanner.candle_history_limit', 400),
-            (int) $pair->strategy->volume_sma_period,
-        );
-
-        if ($requiredCount > 999) {
-            $this->recordNotQualified($pair, $run, $candleAt, 'required_history_exceeds_bybit_limit');
-
-            return;
-        }
-
-        try {
-            $result = $bybit->getKlines(
-                symbol: $pair->symbol,
-                interval: '4H',
-                category: 'linear',
-                limit: min(1000, $requiredCount + 1),
-                environment: (string) config('trading_scanner.environment', 'testnet'),
+        if (! $this->hasReusableIndicatorValues($signal)) {
+            $requiredCount = max(
+                400,
+                (int) config('trading_scanner.candle_history_limit', 400),
+                (int) $pair->strategy->volume_sma_period,
+                TradingSignalService::RSI_PERIOD + 1,
             );
-            $rows = $result['list'] ?? null;
 
-            if (! is_array($rows)) {
-                throw new CandleDataException('candle_list_missing');
+            if ($requiredCount > 999) {
+                $pairResult->complete(false, 'required_history_exceeds_bybit_limit');
+
+                return;
             }
 
-            $candles = $normalizer->normalizeClosed(
-                $rows,
-                now('UTC')->getTimestampMs(),
-                $requiredCount,
-                (int) config('trading_scanner.candle_interval_ms', 14_400_000),
+            try {
+                $response = $bybit->getKlines(
+                    symbol: $pair->symbol,
+                    interval: '4H',
+                    category: 'linear',
+                    limit: min(1000, $requiredCount + 1),
+                    environment: (string) config('trading_scanner.environment', 'testnet'),
+                );
+                $rows = $response['list'] ?? null;
+
+                if (! is_array($rows)) {
+                    throw new CandleDataException('candle_list_missing');
+                }
+
+                $candles = $normalizer->normalizeClosed(
+                    $rows,
+                    now('UTC')->getTimestampMs(),
+                    $requiredCount,
+                    (int) config('trading_scanner.candle_interval_ms', 14_400_000),
+                );
+            } catch (CandleDataException $exception) {
+                if ($exception->reason === 'insufficient_closed_candles') {
+                    $pairResult->complete(
+                        false,
+                        'insufficient_rsi_history',
+                        rsiStatus: ScanRunPairResult::RSI_INSUFFICIENT_HISTORY,
+                    );
+                } elseif (in_array($exception->reason, ['candle_list_missing', 'missing_or_non_contiguous_candles'], true)) {
+                    $pairResult->complete(
+                        false,
+                        'invalid_rsi_data',
+                        rsiStatus: ScanRunPairResult::RSI_INVALID_DATA,
+                    );
+                } else {
+                    $pairResult->complete(false, $exception->reason);
+                }
+
+                return;
+            }
+
+            $latestCandle = $candles[array_key_last($candles)];
+
+            if ($latestCandle['timestamp'] !== $this->candleOpenMs) {
+                $pairResult->complete(false, 'latest_closed_candle_does_not_match_scan');
+
+                return;
+            }
+
+            $evaluation = $signalService->evaluate($pair->strategy, $candles);
+            $signal = $pair->signals()->updateOrCreate(
+                ['timeframe' => '4H', 'candle_at' => $candleAt],
+                $evaluation + ['evaluated_at' => now()],
             );
-        } catch (CandleDataException $exception) {
-            $this->recordNotQualified($pair, $run, $candleAt, $exception->reason);
-
-            return;
         }
 
-        $latestCandle = $candles[array_key_last($candles)];
-
-        if ($latestCandle['timestamp'] !== $this->candleOpenMs) {
-            $this->recordNotQualified($pair, $run, $candleAt, 'latest_closed_candle_does_not_match_scan');
-
-            return;
-        }
-
-        $evaluation = $signalService->evaluate($pair->strategy, $candles);
-        $signal = $pair->signals()->firstOrCreate(
-            ['timeframe' => '4H', 'candle_at' => $candleAt],
-            $evaluation + ['evaluated_at' => now()],
+        $qualification = $signalService->qualify($signal->toArray(), (float) $rsiMaximumSnapshot);
+        $pairResult->complete(
+            $qualification['is_qualified'],
+            $qualification['evaluation_reason'],
+            $signal->id,
+            $qualification['rsi_status'],
         );
-
-        $run->recordResult($signal->is_qualified);
     }
 
     public function failed(Throwable $exception): void
     {
-        $pair = ScannedPair::query()->find($this->scannedPairId);
         $run = ScanRun::query()->find($this->scanRunId);
 
-        if ($pair !== null) {
-            $candleAt = Carbon::createFromTimestampMs($this->candleOpenMs, 'UTC');
-            $pair->signals()->firstOrCreate(
-                ['timeframe' => '4H', 'candle_at' => $candleAt],
-                [
-                    'is_qualified' => false,
-                    'evaluation_reason' => 'evaluation_failed:'.class_basename($exception),
-                    'evaluated_at' => now(),
-                ],
-            );
+        if ($run === null || $run->status !== 'running') {
+            return;
         }
 
-        if ($run !== null && $run->status === 'running') {
-            $run->recordFailure('symbol_evaluation_failed:'.class_basename($exception));
+        $pair = ScannedPair::query()->find($this->scannedPairId);
+
+        if ($pair === null) {
+            return;
+        }
+
+        $result = $this->scanRunPairResultId !== null
+            ? ScanRunPairResult::query()->where('scan_run_id', $run->id)->find($this->scanRunPairResultId)
+            : ScanRunPairResult::query()->where('scan_run_id', $run->id)->where('scanned_pair_id', $pair->id)->first();
+
+        if ($result !== null) {
+            $result->fail('symbol_evaluation_failed:'.class_basename($exception));
         }
     }
 
-    private function recordNotQualified(ScannedPair $pair, ScanRun $run, Carbon $candleAt, string $reason): void
+    private function pairResult(ScanRun $run, ScannedPair $pair): ScanRunPairResult
     {
-        $signal = $pair->signals()->firstOrCreate(
-            ['timeframe' => '4H', 'candle_at' => $candleAt],
+        if ($this->scanRunPairResultId !== null) {
+            return ScanRunPairResult::query()
+                ->where('scan_run_id', $run->id)
+                ->where('scanned_pair_id', $pair->id)
+                ->findOrFail($this->scanRunPairResultId);
+        }
+
+        return $run->pairResults()->firstOrCreate(
+            ['scanned_pair_id' => $pair->id],
             [
-                'is_qualified' => false,
-                'evaluation_reason' => $reason,
-                'evaluated_at' => now(),
+                'turnover_24h_snapshot' => $pair->turnover_24h_usdt,
+                'minimum_turnover_snapshot' => $run->minimum_turnover_snapshot,
+                'status' => ScanRunPairResult::STATUS_PENDING,
             ],
         );
+    }
 
-        $run->recordResult($signal->is_qualified);
+    private function hasReusableIndicatorValues(?TradingSignal $signal): bool
+    {
+        if ($signal === null) {
+            return false;
+        }
+
+        foreach (['ema_100', 'ema_200', 'ha_open', 'ha_close', 'volume', 'volume_sma', 'ema_bullish', 'ha_bullish', 'volume_confirmed'] as $attribute) {
+            if ($signal->{$attribute} === null) {
+                return false;
+            }
+        }
+
+        if (! in_array($signal->rsi_data_status, ['valid', 'insufficient_history', 'invalid_data'], true)) {
+            return false;
+        }
+
+        return $signal->rsi_data_status !== 'valid' || $signal->rsi_14 !== null;
     }
 }
