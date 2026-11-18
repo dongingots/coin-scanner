@@ -64,6 +64,7 @@ class ScanMarketsJob implements ShouldBeUnique, ShouldQueue
                     'started_at' => now(),
                     'candle_at' => $candleAt,
                     'minimum_turnover_snapshot' => $strategy->minimum_turnover_24h_usdt,
+                    'maximum_coin_price_snapshot' => $strategy->maximum_coin_price,
                     'rsi_maximum_snapshot' => $strategy->rsi_maximum,
                 ]));
             }
@@ -98,6 +99,7 @@ class ScanMarketsJob implements ShouldBeUnique, ShouldQueue
                     'started_at' => now(),
                     'candle_at' => $candleAt,
                     'minimum_turnover_snapshot' => $strategy->minimum_turnover_24h_usdt,
+                    'maximum_coin_price_snapshot' => $run->maximum_coin_price_snapshot ?? $strategy->maximum_coin_price,
                     'rsi_maximum_snapshot' => $strategy->rsi_maximum,
                 ]);
             }
@@ -114,7 +116,12 @@ class ScanMarketsJob implements ShouldBeUnique, ShouldQueue
                 /** @var ScanRun $run */
                 $run = $runsByStrategy->get($strategy->id);
                 $strategy->scannedPairs()->update(['is_active' => false]);
-                $candidates = $universe->candidatesFor($strategy, $snapshot, $run->minimum_turnover_snapshot);
+                $candidates = $universe->candidatesFor(
+                    $strategy,
+                    $snapshot,
+                    $run->minimum_turnover_snapshot,
+                    $run->maximum_coin_price_snapshot,
+                );
                 $run->update([
                     'instrument_count' => count($snapshot['instruments']),
                     'pair_count' => count($candidates),

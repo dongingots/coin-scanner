@@ -21,6 +21,9 @@
                     @if ($latestRun->minimum_turnover_snapshot !== null)
                         <div class="mt-1 text-xs text-slate-400">Minimum turnover at scan: {{ number_format((float) $latestRun->minimum_turnover_snapshot, 8) }} USDT</div>
                     @endif
+                    @if ($latestRun->maximum_coin_price_snapshot !== null)
+                        <div class="mt-1 text-xs text-slate-400">Maximum coin price at scan: {{ number_format((float) $latestRun->maximum_coin_price_snapshot, 8) }} USDT</div>
+                    @endif
                     @if ($latestRun->rsi_maximum_snapshot !== null)
                         <div class="mt-1 text-xs text-slate-400">RSI 14 maximum at scan: {{ number_format((float) $latestRun->rsi_maximum_snapshot, 2) }} · 4H</div>
                     @endif
@@ -116,6 +119,14 @@
                             <div class="mt-1 font-medium text-white">{{ number_format((float) $strategy->rsi_maximum, 2) }} <span class="text-xs font-normal text-slate-500">current setting · run snapshot pending</span></div>
                         @endif
                     </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-4 sm:col-span-2">
+                        <div class="text-xs uppercase tracking-wide text-slate-500">Maximum coin price</div>
+                        @if ($latestRun->maximum_coin_price_snapshot !== null)
+                            <div class="mt-1 font-medium text-white">{{ number_format((float) $latestRun->maximum_coin_price_snapshot, 8) }} USDT <span class="text-xs font-normal text-slate-500">scan snapshot</span></div>
+                        @else
+                            <div class="mt-1 font-medium text-white">{{ number_format((float) $strategy->maximum_coin_price, 8) }} USDT <span class="text-xs font-normal text-slate-500">current setting · run snapshot pending</span></div>
+                        @endif
+                    </div>
                 </div>
             </div>
         </section>
@@ -144,7 +155,7 @@
             <section class="rounded-2xl border border-slate-800 bg-slate-900 p-5" aria-labelledby="scanner-settings-heading">
                 <div class="mb-4">
                     <h2 id="scanner-settings-heading" class="text-lg font-semibold text-white">Strategy Settings</h2>
-                    <p class="mt-1 text-sm text-slate-400">Configure the minimum 24-hour trading turnover for future scans.</p>
+                    <p class="mt-1 text-sm text-slate-400">Configure eligibility limits for future scans.</p>
                 </div>
                 <form wire:submit="saveSettings" class="flex flex-wrap items-end gap-4">
                     <div class="min-w-64 flex-1">
@@ -156,6 +167,17 @@
                         <div class="mt-2 text-xs text-slate-500">Current saved value: {{ $strategy->minimum_turnover_24h_usdt !== null ? number_format((float) $strategy->minimum_turnover_24h_usdt, 8).' USDT' : 'not set' }}</div>
                         @error('minimumTurnover')
                             <p role="alert" aria-live="polite" class="mt-2 text-sm text-rose-300">Enter a positive USDT amount with up to 8 decimal places.</p>
+                        @enderror
+                    </div>
+                    <div class="min-w-52 flex-1">
+                        <label for="maximum-coin-price" class="mb-2 block text-sm font-medium text-slate-200">Maximum Coin Price (USDT)</label>
+                        <div class="flex items-center gap-2">
+                            <input id="maximum-coin-price" type="number" min="0.00000001" step="0.00000001" inputmode="decimal" wire:model="maximumCoinPrice" class="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400">
+                            <span class="text-sm font-medium text-slate-400">USDT</span>
+                        </div>
+                        <div class="mt-2 text-xs text-slate-500">Current saved maximum: {{ number_format((float) $strategy->maximum_coin_price, 8) }} USDT · uses Bybit last price</div>
+                        @error('maximumCoinPrice')
+                            <p role="alert" aria-live="polite" class="mt-2 text-sm text-rose-300">Enter a positive USDT price with up to 8 decimal places.</p>
                         @enderror
                     </div>
                     <div class="min-w-52 flex-1">
@@ -213,7 +235,7 @@
                     </button>
                 @endforeach
             </div>
-            <div class="text-xs text-slate-500">Strategy: {{ $strategy->name }} · Volume SMA {{ $strategy->volume_sma_period }} · RSI (14) 4H ≤ {{ number_format((float) ($latestRun?->rsi_maximum_snapshot ?? $strategy->rsi_maximum), 2) }} · Minimum 24H turnover: {{ $strategy->minimum_turnover_24h_usdt ? number_format((float) $strategy->minimum_turnover_24h_usdt, 2).' USDT' : 'not set' }}</div>
+            <div class="text-xs text-slate-500">Strategy: {{ $strategy->name }} · Max coin price: @if ($latestRun){{ $latestRun->maximum_coin_price_snapshot !== null ? number_format((float) $latestRun->maximum_coin_price_snapshot, 8).' USDT at scan' : 'snapshot unavailable' }}@else{{ number_format((float) $strategy->maximum_coin_price, 8).' USDT current setting' }}@endif · Volume SMA {{ $strategy->volume_sma_period }} · RSI (14) 4H ≤ {{ number_format((float) ($latestRun?->rsi_maximum_snapshot ?? $strategy->rsi_maximum), 2) }} · Minimum 24H turnover: {{ $strategy->minimum_turnover_24h_usdt ? number_format((float) $strategy->minimum_turnover_24h_usdt, 2).' USDT' : 'not set' }}</div>
         </div>
 
         @if ($resultsUnavailableMessage)

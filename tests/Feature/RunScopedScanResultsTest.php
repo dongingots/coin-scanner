@@ -201,7 +201,7 @@ class RunScopedScanResultsTest extends TestCase
         $client->shouldReceive('getTickers')
             ->once()
             ->with('linear', null, $environment)
-            ->andReturn(['list' => [['symbol' => 'LOWUSDT', 'turnover24h' => '100000.00']]]);
+            ->andReturn(['list' => [['symbol' => 'LOWUSDT', 'lastPrice' => '5', 'turnover24h' => '100000.00']]]);
         $universe = new MarketUniverseService($client);
         $job = new ScanMarketsJob([$run->id]);
 
@@ -281,6 +281,7 @@ class RunScopedScanResultsTest extends TestCase
             ];
             $tickers[] = [
                 'symbol' => $symbol,
+                'lastPrice' => '5',
                 'turnover24h' => $index === 0 ? '400000.00' : '600000.00',
             ];
         }

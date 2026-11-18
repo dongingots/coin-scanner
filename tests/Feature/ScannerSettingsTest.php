@@ -29,9 +29,12 @@ class ScannerSettingsTest extends TestCase
 
         Livewire::test(ScannerDashboard::class)
             ->assertSet('minimumTurnover', '1000000.00000000')
+            ->assertSet('maximumCoinPrice', '10.00000000')
             ->assertSet('rsiMaximum', '65.00')
             ->assertSee('Current saved value: 1,000,000.00000000 USDT')
             ->assertSee('Minimum 24H Turnover (USDT)')
+            ->assertSee('Maximum Coin Price (USDT)')
+            ->assertSee('Current saved maximum: 10.00000000 USDT')
             ->assertSee('RSI (14) Maximum · 4H');
     }
 
@@ -43,6 +46,7 @@ class ScannerSettingsTest extends TestCase
             'started_at' => now()->subHour(),
             'finished_at' => now(),
             'minimum_turnover_snapshot' => '1000000.00000000',
+            'maximum_coin_price_snapshot' => '10.00000000',
         ]);
         $pair = $strategy->scannedPairs()->create([
             'symbol' => 'ALTUSDT',
@@ -64,6 +68,7 @@ class ScannerSettingsTest extends TestCase
 
         Livewire::test(ScannerDashboard::class)
             ->set('minimumTurnover', '2500000')
+            ->set('maximumCoinPrice', '8')
             ->call('saveSettings')
             ->assertHasNoErrors()
             ->assertSee('Scanner settings saved');
@@ -71,8 +76,10 @@ class ScannerSettingsTest extends TestCase
         $this->assertDatabaseHas('trading_strategies', [
             'id' => $strategy->id,
             'minimum_turnover_24h_usdt' => '2500000.00000000',
+            'maximum_coin_price' => '8.00000000',
         ]);
         $this->assertSame('1000000.00000000', $run->fresh()->minimum_turnover_snapshot);
+        $this->assertSame('10.00000000', $run->fresh()->maximum_coin_price_snapshot);
         $this->assertSame('all_conditions_met', $signal->fresh()->evaluation_reason);
         $this->assertTrue($signal->fresh()->is_qualified);
     }
@@ -115,6 +122,28 @@ class ScannerSettingsTest extends TestCase
         }
     }
 
+    public function test_maximum_coin_price_setting_is_editable_and_must_be_positive(): void
+    {
+        [$user, $strategy] = $this->activeStrategy('1000000.00000000');
+        $this->actingAs($user);
+
+        Livewire::test(ScannerDashboard::class)
+            ->set('maximumCoinPrice', '12.5')
+            ->call('saveSettings')
+            ->assertHasNoErrors()
+            ->assertSee('Scanner settings saved');
+
+        $this->assertSame('12.50000000', $strategy->fresh()->maximum_coin_price);
+
+        foreach (['0', '-1', 'not-a-price'] as $value) {
+            Livewire::test(ScannerDashboard::class)
+                ->set('maximumCoinPrice', $value)
+                ->call('saveSettings')
+                ->assertSee('Please correct the scanner settings')
+                ->assertHasErrors(['maximumCoinPrice']);
+        }
+    }
+
     public function test_user_cannot_modify_another_users_strategy(): void
     {
         [, $strategy] = $this->activeStrategy('1000000.00000000');
@@ -136,6 +165,7 @@ class ScannerSettingsTest extends TestCase
 
         Livewire::test(ScannerDashboard::class)
             ->set('minimumTurnover', '2000000')
+            ->set('maximumCoinPrice', '8')
             ->call('saveSettings')
             ->call('runScanNow')
             ->assertSee('Market scan queued');
@@ -147,6 +177,7 @@ class ScannerSettingsTest extends TestCase
 
         $run = ScanRun::query()->firstOrFail();
         $this->assertSame('2000000.00000000', $run->minimum_turnover_snapshot);
+        $this->assertSame('8.00000000', $run->maximum_coin_price_snapshot);
         $this->assertSame('65.00', $run->rsi_maximum_snapshot);
         $this->assertDatabaseHas('scan_run_pair_results', [
             'evaluation_reason' => 'turnover_below_configured_minimum',
@@ -168,6 +199,7 @@ class ScannerSettingsTest extends TestCase
 
         $run = ScanRun::query()->where('trading_strategy_id', $strategy->id)->firstOrFail();
         $this->assertSame('1000000.00000000', $run->minimum_turnover_snapshot);
+        $this->assertSame('10.00000000', $run->maximum_coin_price_snapshot);
         $this->assertSame('65.00', $run->rsi_maximum_snapshot);
         $this->assertDatabaseHas('scan_run_pair_results', [
             'evaluation_reason' => 'turnover_below_configured_minimum',
@@ -192,6 +224,7 @@ class ScannerSettingsTest extends TestCase
             ->andReturnUsing(function () use ($strategy): array {
                 TradingStrategy::query()->whereKey($strategy->id)->update([
                     'minimum_turnover_24h_usdt' => '2000000.00000000',
+                    'maximum_coin_price' => '4.00000000',
                     'rsi_maximum' => '55.00',
                 ]);
 
@@ -200,14 +233,16 @@ class ScannerSettingsTest extends TestCase
         $client->shouldReceive('getTickers')
             ->once()
             ->with('linear', null, $environment)
-            ->andReturn(['list' => [['symbol' => 'ALTUSDT', 'turnover24h' => '1500000']]]);
+            ->andReturn(['list' => [['symbol' => 'ALTUSDT', 'lastPrice' => '5', 'turnover24h' => '1500000']]]);
         Bus::fake([EvaluateSymbolJob::class]);
 
         (new ScanMarketsJob([$run->id]))->handle(new MarketUniverseService($client), new FourHourCandleClock);
 
         $this->assertSame('1000000.00000000', $run->fresh()->minimum_turnover_snapshot);
+        $this->assertSame('10.00000000', $run->fresh()->maximum_coin_price_snapshot);
         $this->assertSame('65.00', $run->fresh()->rsi_maximum_snapshot);
         $this->assertSame('2000000.00000000', $strategy->fresh()->minimum_turnover_24h_usdt);
+        $this->assertSame('4.00000000', $strategy->fresh()->maximum_coin_price);
         Bus::assertDispatched(EvaluateSymbolJob::class);
     }
 
@@ -222,7 +257,7 @@ class ScannerSettingsTest extends TestCase
         $client->shouldReceive('getTickers')
             ->once()
             ->with('linear', null, $environment)
-            ->andReturn(['list' => [['symbol' => 'ALTUSDT', 'turnover24h' => $turnover]]]);
+            ->andReturn(['list' => [['symbol' => 'ALTUSDT', 'lastPrice' => '5', 'turnover24h' => $turnover]]]);
 
         $job->handle(new MarketUniverseService($client), new FourHourCandleClock);
     }

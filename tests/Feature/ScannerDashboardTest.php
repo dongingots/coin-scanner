@@ -32,6 +32,7 @@ class ScannerDashboardTest extends TestCase
             'finished_at' => now(),
             'candle_at' => now()->startOfDay(),
             'minimum_turnover_snapshot' => '250000.00000000',
+            'maximum_coin_price_snapshot' => '10.00000000',
             'rsi_maximum_snapshot' => '65.00',
         ]);
         $this->pairWithSignal($strategy, $run, 'ALPHAUSDT', true);
@@ -40,6 +41,7 @@ class ScannerDashboardTest extends TestCase
         Livewire::test(ScannerDashboard::class)
             ->assertSee('Altcoins scanned')
             ->assertSee('250,000.00000000 USDT')
+            ->assertSee('Maximum coin price at scan: 10.00000000 USDT')
             ->assertSee('#1 · Completed')
             ->assertSee('ALPHAUSDT')
             ->assertSee('BETAUSDT')

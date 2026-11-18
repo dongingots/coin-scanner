@@ -24,6 +24,7 @@ class ScanRun extends Model
         'started_at',
         'candle_at',
         'minimum_turnover_snapshot',
+        'maximum_coin_price_snapshot',
         'rsi_maximum_snapshot',
         'finished_at',
         'error_message',
@@ -36,6 +37,7 @@ class ScanRun extends Model
             'started_at' => 'datetime',
             'candle_at' => 'datetime',
             'minimum_turnover_snapshot' => 'decimal:8',
+            'maximum_coin_price_snapshot' => 'decimal:8',
             'rsi_maximum_snapshot' => 'decimal:2',
             'finished_at' => 'datetime',
         ];

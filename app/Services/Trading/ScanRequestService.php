@@ -130,6 +130,7 @@ class ScanRequestService
                         'queued_at' => $now,
                         'started_at' => $now,
                         'candle_at' => $candleAt,
+                        'maximum_coin_price_snapshot' => $strategy->maximum_coin_price,
                     ]);
 
                     $runIds[] = $run->id;

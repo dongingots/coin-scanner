@@ -108,9 +108,9 @@ class ScanMarketsJobTest extends TestCase
         $client->shouldReceive('getTickers')
             ->once()
             ->andReturn(['list' => [
-                ['symbol' => 'ALTUSDT', 'turnover24h' => '250.00'],
-                ['symbol' => 'LOWUSDT', 'turnover24h' => '99.00'],
-                ['symbol' => 'BTCUSDT', 'turnover24h' => '1000000.00'],
+                ['symbol' => 'ALTUSDT', 'lastPrice' => '5', 'turnover24h' => '250.00'],
+                ['symbol' => 'LOWUSDT', 'lastPrice' => '6', 'turnover24h' => '99.00'],
+                ['symbol' => 'BTCUSDT', 'lastPrice' => '5', 'turnover24h' => '1000000.00'],
             ]]);
         Bus::fake([EvaluateSymbolJob::class]);
 
@@ -132,6 +132,46 @@ class ScanMarketsJobTest extends TestCase
             fn (EvaluateSymbolJob $job): bool => $job->scannedPairId === 1 && $job->scanRunId === 1,
         );
         $this->assertSame(0, TradingSignal::query()->count());
+    }
+
+    public function test_candidate_count_and_evaluation_jobs_use_only_coins_with_valid_prices_at_or_below_the_snapshot(): void
+    {
+        $strategy = User::factory()->create()->tradingStrategies()->create([
+            'name' => 'Scanner',
+            'is_active' => true,
+            'maximum_coin_price' => '10.00000000',
+        ]);
+        $client = Mockery::mock(BybitReadOnlyClient::class);
+        $client->shouldReceive('getLinearInstruments')
+            ->once()
+            ->andReturn(['list' => [
+                $this->instrument('FIVEUSDT', 'FIVE'),
+                $this->instrument('TENUSDT', 'TEN'),
+                $this->instrument('OVERUSDT', 'OVER'),
+                $this->instrument('INVALIDUSDT', 'INVALID'),
+                $this->instrument('MISSINGUSDT', 'MISSING'),
+            ], 'nextPageCursor' => '']);
+        $client->shouldReceive('getTickers')
+            ->once()
+            ->andReturn(['list' => [
+                ['symbol' => 'FIVEUSDT', 'lastPrice' => '5', 'turnover24h' => '100'],
+                ['symbol' => 'TENUSDT', 'lastPrice' => '10', 'turnover24h' => '100'],
+                ['symbol' => 'OVERUSDT', 'lastPrice' => '10.01', 'turnover24h' => '100'],
+                ['symbol' => 'INVALIDUSDT', 'lastPrice' => 'invalid', 'turnover24h' => '100'],
+            ]]);
+        Bus::fake([EvaluateSymbolJob::class]);
+
+        (new ScanMarketsJob)->handle(new MarketUniverseService($client), new FourHourCandleClock);
+
+        $run = ScanRun::query()->firstOrFail();
+        $this->assertSame('10.00000000', $run->maximum_coin_price_snapshot);
+        $this->assertSame(2, $run->pair_count);
+        $this->assertDatabaseCount('scanned_pairs', 2);
+        $this->assertDatabaseHas('scanned_pairs', ['symbol' => 'FIVEUSDT']);
+        $this->assertDatabaseHas('scanned_pairs', ['symbol' => 'TENUSDT']);
+        $this->assertDatabaseMissing('scanned_pairs', ['symbol' => 'OVERUSDT']);
+        $this->assertDatabaseMissing('scanned_pairs', ['symbol' => 'INVALIDUSDT']);
+        $this->assertSame(2, Bus::dispatched(EvaluateSymbolJob::class)->count());
     }
 
     private function instrument(string $symbol, string $base): array

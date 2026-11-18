@@ -65,9 +65,14 @@ class MarketUniverseService
     /** @param array{instruments:list<array<string,mixed>>,tickers:array<string,array<string,mixed>>} $snapshot
      * @return list<array{symbol:string,base_coin:string,quote_coin:string,contract_type:string,turnover:?string,can_evaluate:bool,reason:?string}>
      */
-    public function candidatesFor(TradingStrategy $strategy, array $snapshot, ?string $minimumTurnover): array
-    {
+    public function candidatesFor(
+        TradingStrategy $strategy,
+        array $snapshot,
+        ?string $minimumTurnover,
+        ?string $maximumCoinPrice = null,
+    ): array {
         $candidates = [];
+        $maximumCoinPrice ??= (string) ($strategy->maximum_coin_price ?? '10.00000000');
         $excludedSymbols = array_map('strtoupper', $strategy->excluded_symbols ?? []);
         $stablecoins = array_map('strtoupper', config('trading_scanner.stablecoin_base_coins', []));
         foreach ($snapshot['instruments'] as $instrument) {
@@ -97,6 +102,13 @@ class MarketUniverseService
             }
 
             $ticker = $snapshot['tickers'][$symbol] ?? null;
+            $lastPrice = $ticker['lastPrice'] ?? null;
+            $lastPriceIsValid = is_numeric($lastPrice) && is_finite((float) $lastPrice) && (float) $lastPrice > 0;
+
+            if (! $lastPriceIsValid || (float) $lastPrice > (float) $maximumCoinPrice) {
+                continue;
+            }
+
             $turnover = $ticker['turnover24h'] ?? null;
             $turnoverIsValid = is_numeric($turnover) && is_finite((float) $turnover) && (float) $turnover >= 0;
             $turnoverValue = $turnoverIsValid ? (string) $turnover : null;

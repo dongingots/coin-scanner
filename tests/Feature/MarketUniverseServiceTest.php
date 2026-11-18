@@ -56,8 +56,9 @@ class MarketUniverseServiceTest extends TestCase
                 $this->instrument('MISSINGUSDT', 'MISSING'),
             ],
             'tickers' => [
-                'ALTUSDT' => ['turnover24h' => '250.50'],
-                'LOWUSDT' => ['turnover24h' => '99.99'],
+                'ALTUSDT' => ['lastPrice' => '5', 'turnover24h' => '250.50'],
+                'LOWUSDT' => ['lastPrice' => '6', 'turnover24h' => '99.99'],
+                'MISSINGUSDT' => ['lastPrice' => '7'],
             ],
         ];
 
@@ -75,7 +76,7 @@ class MarketUniverseServiceTest extends TestCase
         $strategy = new TradingStrategy(['exclude_btc' => false, 'exclude_eth' => false, 'exclude_stablecoins' => false]);
         $snapshot = [
             'instruments' => [$this->instrument('ALTUSDT', 'ALT')],
-            'tickers' => ['ALTUSDT' => ['turnover24h' => '0.01']],
+            'tickers' => ['ALTUSDT' => ['lastPrice' => '5', 'turnover24h' => '0.01']],
         ];
 
         $candidate = (new MarketUniverseService(Mockery::mock(BybitReadOnlyClient::class)))
@@ -83,6 +84,37 @@ class MarketUniverseServiceTest extends TestCase
 
         $this->assertNull($strategy->minimum_turnover_24h_usdt);
         $this->assertTrue($candidate['can_evaluate']);
+    }
+
+    public function test_maximum_price_filter_accepts_five_and_exactly_ten_but_excludes_higher_invalid_and_missing_prices(): void
+    {
+        $strategy = new TradingStrategy([
+            'exclude_btc' => false,
+            'exclude_eth' => false,
+            'exclude_stablecoins' => false,
+        ]);
+        $snapshot = [
+            'instruments' => [
+                $this->instrument('FIVEUSDT', 'FIVE'),
+                $this->instrument('TENUSDT', 'TEN'),
+                $this->instrument('OVERUSDT', 'OVER'),
+                $this->instrument('INVALIDUSDT', 'INVALID'),
+                $this->instrument('ZEROUSDT', 'ZERO'),
+                $this->instrument('MISSINGUSDT', 'MISSING'),
+            ],
+            'tickers' => [
+                'FIVEUSDT' => ['lastPrice' => '5', 'turnover24h' => '100'],
+                'TENUSDT' => ['lastPrice' => '10', 'turnover24h' => '100'],
+                'OVERUSDT' => ['lastPrice' => '10.0001', 'turnover24h' => '100'],
+                'INVALIDUSDT' => ['lastPrice' => 'not-a-price', 'turnover24h' => '100'],
+                'ZEROUSDT' => ['lastPrice' => '0', 'turnover24h' => '100'],
+            ],
+        ];
+
+        $candidates = (new MarketUniverseService(Mockery::mock(BybitReadOnlyClient::class)))
+            ->candidatesFor($strategy, $snapshot, null, '10.00000000');
+
+        $this->assertSame(['FIVEUSDT', 'TENUSDT'], array_column($candidates, 'symbol'));
     }
 
     private function instrument(
