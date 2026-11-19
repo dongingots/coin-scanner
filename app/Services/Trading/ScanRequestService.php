@@ -131,6 +131,7 @@ class ScanRequestService
                         'started_at' => $now,
                         'candle_at' => $candleAt,
                         'maximum_coin_price_snapshot' => $strategy->maximum_coin_price,
+                        'ema_trend_filter_enabled_snapshot' => $strategy->ema_trend_filter_enabled,
                     ]);
 
                     $runIds[] = $run->id;

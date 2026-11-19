@@ -85,6 +85,13 @@ class EvaluateSymbolJob implements ShouldQueue
             $run->update(['rsi_maximum_snapshot' => $rsiMaximumSnapshot]);
         }
 
+        $emaTrendFilterEnabledSnapshot = $run->ema_trend_filter_enabled_snapshot;
+
+        if ($emaTrendFilterEnabledSnapshot === null) {
+            $emaTrendFilterEnabledSnapshot = $pair->strategy->ema_trend_filter_enabled;
+            $run->update(['ema_trend_filter_enabled_snapshot' => $emaTrendFilterEnabledSnapshot]);
+        }
+
         $minimumTurnover = $run->minimum_turnover_snapshot;
         $pairResult->update(['minimum_turnover_snapshot' => $minimumTurnover]);
 
@@ -172,7 +179,11 @@ class EvaluateSymbolJob implements ShouldQueue
             );
         }
 
-        $qualification = $signalService->qualify($signal->toArray(), (float) $rsiMaximumSnapshot);
+        $qualification = $signalService->qualify(
+            $signal->toArray(),
+            (float) $rsiMaximumSnapshot,
+            (bool) $emaTrendFilterEnabledSnapshot,
+        );
         $pairResult->complete(
             $qualification['is_qualified'],
             $qualification['evaluation_reason'],

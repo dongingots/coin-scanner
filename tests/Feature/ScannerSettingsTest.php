@@ -30,10 +30,12 @@ class ScannerSettingsTest extends TestCase
         Livewire::test(ScannerDashboard::class)
             ->assertSet('minimumTurnover', '1000000.00000000')
             ->assertSet('maximumCoinPrice', '10.00000000')
+            ->assertSet('emaTrendFilterEnabled', true)
             ->assertSet('rsiMaximum', '65.00')
             ->assertSee('Current saved value: 1,000,000.00000000 USDT')
             ->assertSee('Minimum 24H Turnover (USDT)')
             ->assertSee('Maximum Coin Price (USDT)')
+            ->assertSee('EMA 100 / EMA 200 Trend Filter')
             ->assertSee('Current saved maximum: 10.00000000 USDT')
             ->assertSee('RSI (14) Maximum · 4H');
     }
@@ -47,6 +49,7 @@ class ScannerSettingsTest extends TestCase
             'finished_at' => now(),
             'minimum_turnover_snapshot' => '1000000.00000000',
             'maximum_coin_price_snapshot' => '10.00000000',
+            'ema_trend_filter_enabled_snapshot' => true,
         ]);
         $pair = $strategy->scannedPairs()->create([
             'symbol' => 'ALTUSDT',
@@ -64,11 +67,23 @@ class ScannerSettingsTest extends TestCase
             'evaluation_reason' => 'all_conditions_met',
             'evaluated_at' => now(),
         ]);
+        $pairResult = $run->pairResults()->create([
+            'scanned_pair_id' => $pair->id,
+            'indicator_signal_id' => $signal->id,
+            'turnover_24h_snapshot' => '1500000.00000000',
+            'minimum_turnover_snapshot' => '1000000.00000000',
+            'rsi_status' => 'passed',
+            'status' => 'evaluated',
+            'is_qualified' => true,
+            'evaluation_reason' => 'all_conditions_met',
+            'evaluated_at' => now(),
+        ]);
         $this->actingAs($user);
 
         Livewire::test(ScannerDashboard::class)
             ->set('minimumTurnover', '2500000')
             ->set('maximumCoinPrice', '8')
+            ->set('emaTrendFilterEnabled', false)
             ->call('saveSettings')
             ->assertHasNoErrors()
             ->assertSee('Scanner settings saved');
@@ -77,9 +92,13 @@ class ScannerSettingsTest extends TestCase
             'id' => $strategy->id,
             'minimum_turnover_24h_usdt' => '2500000.00000000',
             'maximum_coin_price' => '8.00000000',
+            'ema_trend_filter_enabled' => false,
         ]);
         $this->assertSame('1000000.00000000', $run->fresh()->minimum_turnover_snapshot);
         $this->assertSame('10.00000000', $run->fresh()->maximum_coin_price_snapshot);
+        $this->assertTrue($run->fresh()->ema_trend_filter_enabled_snapshot);
+        $this->assertTrue($pairResult->fresh()->is_qualified);
+        $this->assertSame('all_conditions_met', $pairResult->fresh()->evaluation_reason);
         $this->assertSame('all_conditions_met', $signal->fresh()->evaluation_reason);
         $this->assertTrue($signal->fresh()->is_qualified);
     }
@@ -166,6 +185,7 @@ class ScannerSettingsTest extends TestCase
         Livewire::test(ScannerDashboard::class)
             ->set('minimumTurnover', '2000000')
             ->set('maximumCoinPrice', '8')
+            ->set('emaTrendFilterEnabled', false)
             ->call('saveSettings')
             ->call('runScanNow')
             ->assertSee('Market scan queued');
@@ -178,6 +198,7 @@ class ScannerSettingsTest extends TestCase
         $run = ScanRun::query()->firstOrFail();
         $this->assertSame('2000000.00000000', $run->minimum_turnover_snapshot);
         $this->assertSame('8.00000000', $run->maximum_coin_price_snapshot);
+        $this->assertFalse($run->ema_trend_filter_enabled_snapshot);
         $this->assertSame('65.00', $run->rsi_maximum_snapshot);
         $this->assertDatabaseHas('scan_run_pair_results', [
             'evaluation_reason' => 'turnover_below_configured_minimum',
@@ -200,6 +221,7 @@ class ScannerSettingsTest extends TestCase
         $run = ScanRun::query()->where('trading_strategy_id', $strategy->id)->firstOrFail();
         $this->assertSame('1000000.00000000', $run->minimum_turnover_snapshot);
         $this->assertSame('10.00000000', $run->maximum_coin_price_snapshot);
+        $this->assertTrue($run->ema_trend_filter_enabled_snapshot);
         $this->assertSame('65.00', $run->rsi_maximum_snapshot);
         $this->assertDatabaseHas('scan_run_pair_results', [
             'evaluation_reason' => 'turnover_below_configured_minimum',
@@ -225,6 +247,7 @@ class ScannerSettingsTest extends TestCase
                 TradingStrategy::query()->whereKey($strategy->id)->update([
                     'minimum_turnover_24h_usdt' => '2000000.00000000',
                     'maximum_coin_price' => '4.00000000',
+                    'ema_trend_filter_enabled' => false,
                     'rsi_maximum' => '55.00',
                 ]);
 
@@ -240,9 +263,11 @@ class ScannerSettingsTest extends TestCase
 
         $this->assertSame('1000000.00000000', $run->fresh()->minimum_turnover_snapshot);
         $this->assertSame('10.00000000', $run->fresh()->maximum_coin_price_snapshot);
+        $this->assertTrue($run->fresh()->ema_trend_filter_enabled_snapshot);
         $this->assertSame('65.00', $run->fresh()->rsi_maximum_snapshot);
         $this->assertSame('2000000.00000000', $strategy->fresh()->minimum_turnover_24h_usdt);
         $this->assertSame('4.00000000', $strategy->fresh()->maximum_coin_price);
+        $this->assertFalse($strategy->fresh()->ema_trend_filter_enabled);
         Bus::assertDispatched(EvaluateSymbolJob::class);
     }
 

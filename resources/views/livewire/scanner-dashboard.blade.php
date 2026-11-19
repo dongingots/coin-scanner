@@ -24,6 +24,7 @@
                     @if ($latestRun->maximum_coin_price_snapshot !== null)
                         <div class="mt-1 text-xs text-slate-400">Maximum coin price at scan: {{ number_format((float) $latestRun->maximum_coin_price_snapshot, 8) }} USDT</div>
                     @endif
+                    <div class="mt-1 text-xs text-slate-400">EMA trend filter at scan: {{ $latestRun->ema_trend_filter_enabled_snapshot === null ? 'snapshot unavailable' : ($latestRun->ema_trend_filter_enabled_snapshot ? 'ON' : 'OFF') }}</div>
                     @if ($latestRun->rsi_maximum_snapshot !== null)
                         <div class="mt-1 text-xs text-slate-400">RSI 14 maximum at scan: {{ number_format((float) $latestRun->rsi_maximum_snapshot, 2) }} · 4H</div>
                     @endif
@@ -127,6 +128,14 @@
                             <div class="mt-1 font-medium text-white">{{ number_format((float) $strategy->maximum_coin_price, 8) }} USDT <span class="text-xs font-normal text-slate-500">current setting · run snapshot pending</span></div>
                         @endif
                     </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-4 sm:col-span-2">
+                        <div class="text-xs uppercase tracking-wide text-slate-500">EMA 100 / EMA 200 trend filter</div>
+                        @if ($latestRun->ema_trend_filter_enabled_snapshot === null)
+                            <div class="mt-1 text-slate-400">Snapshot unavailable</div>
+                        @else
+                            <div class="mt-1 font-medium text-white">{{ $latestRun->ema_trend_filter_enabled_snapshot ? 'ON · EMA 100 must be above EMA 200' : 'OFF · EMA alignment is not required' }}</div>
+                        @endif
+                    </div>
                 </div>
             </div>
         </section>
@@ -191,6 +200,18 @@
                             <p role="alert" aria-live="polite" class="mt-2 text-sm text-rose-300">Enter a value from 0 to 100 with up to 2 decimal places.</p>
                         @enderror
                     </div>
+                    <div class="min-w-64 flex-1">
+                        <span class="mb-2 block text-sm font-medium text-slate-200">EMA 100 / EMA 200 Trend Filter</span>
+                        <label for="ema-trend-filter" class="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">
+                            <input id="ema-trend-filter" type="checkbox" wire:model="emaTrendFilterEnabled" class="peer sr-only">
+                            <span aria-hidden="true" class="relative h-6 w-11 rounded-full bg-slate-700 transition peer-checked:bg-cyan-500 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-cyan-300 after:absolute after:left-1 after:top-1 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-5"></span>
+                            <span class="text-sm font-medium text-white">{{ $emaTrendFilterEnabled ? 'ON' : 'OFF' }}</span>
+                            <span class="text-xs text-slate-400">{{ $emaTrendFilterEnabled ? 'Require EMA 100 > EMA 200' : 'Do not filter by EMA alignment' }}</span>
+                        </label>
+                        @error('emaTrendFilterEnabled')
+                            <p role="alert" aria-live="polite" class="mt-2 text-sm text-rose-300">Choose ON or OFF for the EMA trend filter.</p>
+                        @enderror
+                    </div>
                     <button type="submit" wire:loading.attr="disabled" wire:target="saveSettings" class="inline-flex min-h-11 items-center justify-center rounded-xl border border-cyan-500/50 bg-cyan-950/60 px-5 py-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-900/70 disabled:cursor-wait disabled:opacity-60">
                         <span wire:loading.remove wire:target="saveSettings">Save Settings</span>
                         <span wire:loading wire:target="saveSettings">Saving…</span>
@@ -235,7 +256,7 @@
                     </button>
                 @endforeach
             </div>
-            <div class="text-xs text-slate-500">Strategy: {{ $strategy->name }} · Max coin price: @if ($latestRun){{ $latestRun->maximum_coin_price_snapshot !== null ? number_format((float) $latestRun->maximum_coin_price_snapshot, 8).' USDT at scan' : 'snapshot unavailable' }}@else{{ number_format((float) $strategy->maximum_coin_price, 8).' USDT current setting' }}@endif · Volume SMA {{ $strategy->volume_sma_period }} · RSI (14) 4H ≤ {{ number_format((float) ($latestRun?->rsi_maximum_snapshot ?? $strategy->rsi_maximum), 2) }} · Minimum 24H turnover: {{ $strategy->minimum_turnover_24h_usdt ? number_format((float) $strategy->minimum_turnover_24h_usdt, 2).' USDT' : 'not set' }}</div>
+            <div class="text-xs text-slate-500">Strategy: {{ $strategy->name }} · EMA trend filter: {{ $latestRun ? ($latestRun->ema_trend_filter_enabled_snapshot === null ? 'snapshot unavailable' : ($latestRun->ema_trend_filter_enabled_snapshot ? 'ON' : 'OFF')) : ($strategy->ema_trend_filter_enabled ? 'ON current setting' : 'OFF current setting') }} · Max coin price: @if ($latestRun){{ $latestRun->maximum_coin_price_snapshot !== null ? number_format((float) $latestRun->maximum_coin_price_snapshot, 8).' USDT at scan' : 'snapshot unavailable' }}@else{{ number_format((float) $strategy->maximum_coin_price, 8).' USDT current setting' }}@endif · Volume SMA {{ $strategy->volume_sma_period }} · RSI (14) 4H ≤ {{ number_format((float) ($latestRun?->rsi_maximum_snapshot ?? $strategy->rsi_maximum), 2) }} · Minimum 24H turnover: {{ $strategy->minimum_turnover_24h_usdt ? number_format((float) $strategy->minimum_turnover_24h_usdt, 2).' USDT' : 'not set' }}</div>
         </div>
 
         @if ($resultsUnavailableMessage)
@@ -252,6 +273,7 @@
                                 <th class="px-4 py-3">24H turnover snapshot</th>
                                 <th class="px-4 py-3">Minimum used</th>
                                 <th class="px-4 py-3">EMA 100 / 200</th>
+                                <th class="px-4 py-3">EMA filter</th>
                                 <th class="px-4 py-3">Heikin Ashi</th>
                                 <th class="px-4 py-3">Volume / SMA {{ $strategy->volume_sma_period }}</th>
                                 <th class="px-4 py-3">RSI (14) · 4H</th>
@@ -271,6 +293,11 @@
                                     'invalid_data' => 'Invalid data',
                                     default => 'Not evaluated',
                                 })
+                                @php($emaFilterStatus = $latestRun->ema_trend_filter_enabled_snapshot === null
+                                    ? 'Snapshot unavailable'
+                                    : (! $latestRun->ema_trend_filter_enabled_snapshot
+                                        ? 'OFF · Not required'
+                                        : ($signal?->ema_bullish === null ? 'Not evaluated' : ($signal->ema_bullish ? 'ON · Passed' : 'ON · Rejected'))))
                                 <tr class="align-top hover:bg-slate-800/40">
                                     <td class="whitespace-nowrap px-4 py-4 font-semibold text-white">{{ $pairResult->scannedPair?->symbol ?? 'Pair unavailable' }}</td>
                                     <td class="whitespace-nowrap px-4 py-4 text-slate-300">{{ $pairResult->turnover_24h_snapshot !== null ? number_format((float) $pairResult->turnover_24h_snapshot, 8).' USDT' : 'Unavailable' }}</td>
@@ -283,6 +310,7 @@
                                             <span class="text-slate-500">Unavailable</span>
                                         @endif
                                     </td>
+                                    <td class="whitespace-nowrap px-4 py-4 text-slate-300">{{ $emaFilterStatus }}</td>
                                     <td class="whitespace-nowrap px-4 py-4">
                                         @if ($signal?->ha_bullish === null)
                                             <span class="text-slate-500">Unavailable</span>
@@ -320,7 +348,7 @@
                                     <td class="whitespace-nowrap px-4 py-4 text-xs text-slate-400">{{ $pairResult->evaluated_at?->utc()->format('Y-m-d H:i:s') ?? '—' }}</td>
                                 </tr>
                             @empty
-                                <tr><td colspan="11" class="px-4 py-10 text-center text-slate-500">No pairs match this scan and filter yet.</td></tr>
+                                <tr><td colspan="12" class="px-4 py-10 text-center text-slate-500">No pairs match this scan and filter yet.</td></tr>
                             @endforelse
                         </tbody>
                     </table>

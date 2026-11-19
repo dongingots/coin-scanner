@@ -42,7 +42,9 @@ class TradingSignalService
 
         $reasons = [];
 
-        if (! $emaBullish) {
+        $emaTrendFilterEnabled = (bool) $strategy->ema_trend_filter_enabled;
+
+        if ($emaTrendFilterEnabled && ! $emaBullish) {
             $reasons[] = 'ema_100_not_above_ema_200';
         }
 
@@ -66,24 +68,24 @@ class TradingSignalService
             'ema_bullish' => $emaBullish,
             'ha_bullish' => $haBullish,
             'volume_confirmed' => $volumeConfirmed,
-            'is_qualified' => $emaBullish && $haBullish && $volumeConfirmed,
+            'is_qualified' => (! $emaTrendFilterEnabled || $emaBullish) && $haBullish && $volumeConfirmed,
             'evaluation_reason' => $reasons === [] ? 'all_conditions_met' : implode(';', $reasons),
         ];
     }
 
     /**
      * Apply run-specific qualification to reusable candle indicators.
-     * RSI threshold decisions deliberately live on the ScanRun result, not on
-     * the shared candle signal, because the configured maximum can change.
+     * RSI and EMA filter decisions are applied per ScanRun, not on the shared
+     * candle signal, because either configured threshold/setting can change.
      *
      * @param  array<string, mixed>  $indicators
      * @return array{is_qualified:bool,evaluation_reason:string,rsi_status:string}
      */
-    public function qualify(array $indicators, float $rsiMaximum): array
+    public function qualify(array $indicators, float $rsiMaximum, bool $emaTrendFilterEnabled = true): array
     {
         $reasons = [];
 
-        if (! ($indicators['ema_bullish'] ?? false)) {
+        if ($emaTrendFilterEnabled && ! ($indicators['ema_bullish'] ?? false)) {
             $reasons[] = 'ema_100_not_above_ema_200';
         }
 

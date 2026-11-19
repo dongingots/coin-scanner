@@ -29,6 +29,8 @@ class ScannerDashboard extends Component
 
     public string $maximumCoinPrice = '10.00000000';
 
+    public bool $emaTrendFilterEnabled = true;
+
     public string $rsiMaximum = '65.00';
 
     public ?string $settingsNotice = null;
@@ -40,6 +42,7 @@ class ScannerDashboard extends Component
         $strategy = $this->ownedActiveStrategy();
         $this->minimumTurnover = (string) ($strategy?->minimum_turnover_24h_usdt ?? '');
         $this->maximumCoinPrice = (string) ($strategy?->maximum_coin_price ?? '10.00000000');
+        $this->emaTrendFilterEnabled = (bool) ($strategy?->ema_trend_filter_enabled ?? true);
         $this->rsiMaximum = (string) ($strategy?->rsi_maximum ?? '65.00');
     }
 
@@ -101,6 +104,7 @@ class ScannerDashboard extends Component
             $validated = $this->validate([
                 'minimumTurnover' => ['required', 'numeric', 'gt:0', 'regex:/^\d{1,24}(?:\.\d{1,8})?$/'],
                 'maximumCoinPrice' => ['required', 'numeric', 'gt:0', 'regex:/^\d{1,24}(?:\.\d{1,8})?$/'],
+                'emaTrendFilterEnabled' => ['required', 'boolean'],
                 'rsiMaximum' => ['required', 'numeric', 'min:0', 'max:100', 'regex:/^\d{1,3}(?:\.\d{1,2})?$/'],
             ]);
         } catch (ValidationException $exception) {
@@ -121,6 +125,7 @@ class ScannerDashboard extends Component
             $lockedStrategy->update([
                 'minimum_turnover_24h_usdt' => $validated['minimumTurnover'],
                 'maximum_coin_price' => $validated['maximumCoinPrice'],
+                'ema_trend_filter_enabled' => $validated['emaTrendFilterEnabled'],
                 'rsi_maximum' => $validated['rsiMaximum'],
             ]);
         });
@@ -128,6 +133,7 @@ class ScannerDashboard extends Component
         $freshStrategy = $strategy->fresh();
         $this->minimumTurnover = (string) $freshStrategy->minimum_turnover_24h_usdt;
         $this->maximumCoinPrice = (string) $freshStrategy->maximum_coin_price;
+        $this->emaTrendFilterEnabled = (bool) $freshStrategy->ema_trend_filter_enabled;
         $this->rsiMaximum = (string) $freshStrategy->rsi_maximum;
         $this->settingsNoticeType = 'success';
         $this->settingsNotice = 'Scanner settings saved. New scans will use the updated thresholds.';

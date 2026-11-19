@@ -33,6 +33,7 @@ class ScannerDashboardTest extends TestCase
             'candle_at' => now()->startOfDay(),
             'minimum_turnover_snapshot' => '250000.00000000',
             'maximum_coin_price_snapshot' => '10.00000000',
+            'ema_trend_filter_enabled_snapshot' => true,
             'rsi_maximum_snapshot' => '65.00',
         ]);
         $this->pairWithSignal($strategy, $run, 'ALPHAUSDT', true);
@@ -42,6 +43,8 @@ class ScannerDashboardTest extends TestCase
             ->assertSee('Altcoins scanned')
             ->assertSee('250,000.00000000 USDT')
             ->assertSee('Maximum coin price at scan: 10.00000000 USDT')
+            ->assertSee('EMA trend filter at scan: ON')
+            ->assertSee('ON · Passed')
             ->assertSee('#1 · Completed')
             ->assertSee('ALPHAUSDT')
             ->assertSee('BETAUSDT')
@@ -89,6 +92,30 @@ class ScannerDashboardTest extends TestCase
         Livewire::test(ScannerDashboard::class)
             ->assertSeeInOrder(['ALPHAUSDT', 'ZULUUSDT'])
             ->assertDontSee('OLDERUSDT');
+    }
+
+    public function test_dashboard_shows_ema_alignment_as_not_required_when_run_filter_is_off(): void
+    {
+        $strategy = User::factory()->create()->tradingStrategies()->create([
+            'name' => 'Scanner',
+            'is_active' => true,
+        ]);
+        $run = $strategy->scanRuns()->create([
+            'status' => 'completed',
+            'pair_count' => 1,
+            'evaluated_count' => 1,
+            'qualified_count' => 1,
+            'started_at' => now()->subMinute(),
+            'finished_at' => now(),
+            'ema_trend_filter_enabled_snapshot' => false,
+        ]);
+        $this->pairWithSignal($strategy, $run, 'BEARUSDT', true, false);
+
+        Livewire::test(ScannerDashboard::class)
+            ->assertSee('EMA trend filter at scan: OFF')
+            ->assertSee('OFF · Not required')
+            ->assertSee('BEARUSDT')
+            ->assertSee('Qualified');
     }
 
     public function test_queued_scan_shows_waiting_state_and_hides_stale_results(): void
@@ -310,7 +337,7 @@ class ScannerDashboardTest extends TestCase
             ->assertDontSee('OLDUSDT');
     }
 
-    private function pairWithSignal(TradingStrategy $strategy, $run, string $symbol, bool $qualified): ScannedPair
+    private function pairWithSignal(TradingStrategy $strategy, $run, string $symbol, bool $qualified, bool $emaBullish = true): ScannedPair
     {
         $pair = $strategy->scannedPairs()->create([
             'symbol' => $symbol,
@@ -324,7 +351,7 @@ class ScannerDashboardTest extends TestCase
         $signal = $pair->signals()->create([
             'timeframe' => '4H',
             'candle_at' => now()->startOfDay(),
-            'ema_100' => '200.000000000000',
+            'ema_100' => $emaBullish ? '200.000000000000' : '170.000000000000',
             'ema_200' => '180.000000000000',
             'ha_open' => '199.000000000000',
             'ha_close' => $qualified ? '201.000000000000' : '198.000000000000',
@@ -332,7 +359,7 @@ class ScannerDashboardTest extends TestCase
             'volume_sma' => '15.000000000000',
             'rsi_14' => '55.0000',
             'rsi_data_status' => 'valid',
-            'ema_bullish' => true,
+            'ema_bullish' => $emaBullish,
             'ha_bullish' => $qualified,
             'volume_confirmed' => $qualified,
             'is_qualified' => $qualified,

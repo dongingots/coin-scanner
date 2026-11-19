@@ -65,6 +65,7 @@ class ScanMarketsJob implements ShouldBeUnique, ShouldQueue
                     'candle_at' => $candleAt,
                     'minimum_turnover_snapshot' => $strategy->minimum_turnover_24h_usdt,
                     'maximum_coin_price_snapshot' => $strategy->maximum_coin_price,
+                    'ema_trend_filter_enabled_snapshot' => $strategy->ema_trend_filter_enabled,
                     'rsi_maximum_snapshot' => $strategy->rsi_maximum,
                 ]));
             }
@@ -100,6 +101,7 @@ class ScanMarketsJob implements ShouldBeUnique, ShouldQueue
                     'candle_at' => $candleAt,
                     'minimum_turnover_snapshot' => $strategy->minimum_turnover_24h_usdt,
                     'maximum_coin_price_snapshot' => $run->maximum_coin_price_snapshot ?? $strategy->maximum_coin_price,
+                    'ema_trend_filter_enabled_snapshot' => $run->ema_trend_filter_enabled_snapshot ?? $strategy->ema_trend_filter_enabled,
                     'rsi_maximum_snapshot' => $strategy->rsi_maximum,
                 ]);
             }

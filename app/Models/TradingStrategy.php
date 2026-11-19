@@ -15,6 +15,7 @@ class TradingStrategy extends Model
     protected $attributes = [
         'volume_sma_period' => 20,
         'maximum_coin_price' => '10.00000000',
+        'ema_trend_filter_enabled' => true,
         'rsi_maximum' => '65.00',
         'exclude_btc' => true,
         'exclude_eth' => true,
@@ -27,6 +28,7 @@ class TradingStrategy extends Model
         'name',
         'volume_sma_period',
         'maximum_coin_price',
+        'ema_trend_filter_enabled',
         'rsi_maximum',
         'minimum_turnover_24h_usdt',
         'exclude_btc',
@@ -41,6 +43,7 @@ class TradingStrategy extends Model
         return [
             'minimum_turnover_24h_usdt' => 'decimal:8',
             'maximum_coin_price' => 'decimal:8',
+            'ema_trend_filter_enabled' => 'boolean',
             'rsi_maximum' => 'decimal:2',
             'exclude_btc' => 'boolean',
             'exclude_eth' => 'boolean',

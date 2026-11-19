@@ -74,6 +74,29 @@ class IndicatorCalculatorTest extends TestCase
         $this->assertFalse($signalService->qualify($baseline + ['rsi_14' => $above], 65)['is_qualified']);
     }
 
+    public function test_ema_trend_filter_controls_run_qualification(): void
+    {
+        $service = new TradingSignalService(new IndicatorCalculator);
+        $indicators = [
+            'ema_bullish' => true,
+            'ha_bullish' => true,
+            'volume_confirmed' => true,
+            'rsi_data_status' => 'valid',
+            'rsi_14' => 55.0,
+        ];
+
+        $enabledBullish = $service->qualify($indicators, 65, true);
+        $bearishIndicators = array_replace($indicators, ['ema_bullish' => false]);
+        $disabledBearish = $service->qualify($bearishIndicators, 65, false);
+        $enabledBearish = $service->qualify($bearishIndicators, 65, true);
+
+        $this->assertTrue($enabledBullish['is_qualified']);
+        $this->assertTrue($disabledBearish['is_qualified']);
+        $this->assertSame('all_conditions_met', $disabledBearish['evaluation_reason']);
+        $this->assertFalse($enabledBearish['is_qualified']);
+        $this->assertSame('ema_100_not_above_ema_200', $enabledBearish['evaluation_reason']);
+    }
+
     public function test_insufficient_and_invalid_rsi_data_have_explicit_reasons_and_never_pass_as_zero(): void
     {
         $service = new TradingSignalService(new IndicatorCalculator);
